@@ -4,7 +4,6 @@ namespace App\Services;
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 class ExchangeRateService
 {
@@ -18,55 +17,53 @@ class ExchangeRateService
             $date = Carbon::parse($date);
         }
 
-        // Encontra o último dia útil se for fim de semana ou feriado
         $date = $this->getLastBusinessDay($date);
+        $attempts = 0; // Adiciona um contador de tentativas
 
-        $formattedDate = $date->format('m-d-Y');
-        $url = "{$this->baseUrl}CotacaoMoedaPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao,moeda=@moeda)?@dataInicial='{$formattedDate}'&@dataFinalCotacao='{$formattedDate}'&@moeda='{$currency}'&\$format=json";
+        while ($attempts < 10) { // Limita a 10 tentativas para evitar loop infinito
+            $attempts++; // Incrementa o contador de tentativas
+            $formattedDate = $date->format('m-d-Y');
+            $url = "{$this->baseUrl}CotacaoMoedaPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao,moeda=@moeda)?@dataInicial='{$formattedDate}'&@dataFinalCotacao='{$formattedDate}'&@moeda='{$currency}'&\$top=100&\$orderby=dataHoraCotacao desc&\$format=json";
 
-        // Log da URL gerada
-        Log::info('URL gerada para API do Banco Central: ' . $url);
+            try {
+                $response = Http::get($url);
 
-        try {
-            $response = Http::get($url);
+                if ($response->failed()) {
+                    throw new \Exception('Falha ao buscar taxas de câmbio');
+                }
 
-            // Log da resposta da API
-            Log::info('Resposta da API do Banco Central: ' . $response->body());
+                $data = $response->json();
+                if (!isset($data['value']) || empty($data['value'])) {
+                    // Se não encontrou uma cotação válida, retrocede um dia e continua a busca
+                    $date = $this->getLastBusinessDay($date->subDay());
+                    continue;
+                }
 
-            if ($response->failed()) {
-                return [
-                    'error' => true,
-                    'message' => $response->body()
-                ];
+                // Filtra o boletim de fechamento PTAX
+                $filteredData = array_filter($data['value'], function ($item) {
+                    return $item['tipoBoletim'] === 'Fechamento';
+                });
+
+                if (!empty($filteredData)) {
+                    $filteredData = array_values($filteredData); // Reindexa o array
+                    $buyRate = $filteredData[0]['cotacaoCompra'] ?? 0;
+                    $sellRate = $filteredData[0]['cotacaoVenda'] ?? 0;
+
+                    return [
+                        'buy' => $buyRate,
+                        'sell' => $sellRate,
+                        'date' => $formattedDate,
+                    ];
+                } else {
+                    // Se não encontrou uma cotação de fechamento, retrocede um dia e continua a busca
+                    $date = $this->getLastBusinessDay($date->subDay());
+                }
+            } catch (\Exception $e) {
+                throw new \Exception("Erro ao buscar taxa de câmbio: " . $e->getMessage());
             }
-
-            $data = $response->json()['value'];
-
-            if (empty($data)) {
-                return [
-                    'error' => true,
-                    'message' => 'Nenhuma cotação encontrada para a data fornecida.'
-                ];
-            }
-
-            $buyRate = $data[0]['cotacaoCompra'] ?? 0;
-            $sellRate = $data[0]['cotacaoVenda'] ?? 0;
-
-            // Log dos valores de compra e venda
-            Log::info('Taxa de compra: ' . $buyRate);
-            Log::info('Taxa de venda: ' . $sellRate);
-
-            return [
-                'buy' => $buyRate,
-                'sell' => $sellRate
-            ];
-        } catch (\Exception $e) {
-            Log::error('Erro ao fazer requisição para API do Banco Central: ' . $e->getMessage());
-            return [
-                'error' => true,
-                'message' => 'Erro desconhecido'
-            ];
         }
+
+        throw new \Exception("Nenhuma cotação encontrada após múltiplas tentativas.");
     }
 
     private function getLastBusinessDay(Carbon $date)

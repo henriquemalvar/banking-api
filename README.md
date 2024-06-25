@@ -23,7 +23,8 @@ Esta é uma API RESTful que simula operações bancárias para diferentes moedas
 ### Passo 1: Clone o Repositório
 
 ```bash
-git clone <https://github.com/seu-usuario/banking-api.git>
+git clone git@github.com:henriquemalvar/banking-api.git
+
 cd banking-api
 
 ```

@@ -13,7 +13,6 @@ class AccountControllerTest extends TestCase
 
     public function testCreateAccount()
     {
-        // Simula uma requisição para criar uma nova conta
         $response = $this->postJson('/api/accounts');
 
         $response->assertStatus(201)
@@ -31,7 +30,6 @@ class AccountControllerTest extends TestCase
             'account_number' => 1
         ]);
 
-        // Cria mais uma conta e verifica se o número da conta é incrementado
         $response = $this->postJson('/api/accounts');
 
         $response->assertStatus(201)

@@ -60,15 +60,40 @@ class TransactionController extends Controller
         $currency = $request->currency;
         $amount = $request->amount;
 
-        // Verifica o saldo na moeda solicitada
         $accountBalance = AccountBalance::where('account_id', $account->id)
             ->where('currency', $currency)
             ->first();
 
         $totalBalanceInRequestedCurrency = $accountBalance ? $accountBalance->balance : 0;
 
+        $accountBalances = AccountBalance::where('account_id', $account->id)->get();
+        $totalBalanceInBRL = 0;
+
+        foreach ($accountBalances as $balance) {
+            if ($balance->currency == 'BRL') {
+                $totalBalanceInBRL += $balance->balance;
+            } else {
+                try {
+                    $exchangeRate = $exchangeRateService->getExchangeRate($balance->currency);
+                    $totalBalanceInBRL += $balance->balance * $exchangeRate['buy'];
+                } catch (\Exception $e) {
+                    return response()->json(['message' => $e->getMessage()], 500);
+                }
+            }
+        }
+
+        try {
+            $requestedExchangeRate = $exchangeRateService->getExchangeRate($currency);
+            $requiredAmountInBRL = $amount * $requestedExchangeRate['sell'];
+        } catch (\Exception $e) {
+            return response()->json(['message' => $e->getMessage()], 500);
+        }
+
+        if ($totalBalanceInBRL < $requiredAmountInBRL) {
+            return response()->json(['message' => 'Saldo insuficiente em todas as moedas'], 400);
+        }
+
         if ($totalBalanceInRequestedCurrency >= $amount) {
-            // Deduz diretamente da moeda solicitada
             $accountBalance->balance -= $amount;
             $accountBalance->save();
 
@@ -82,85 +107,55 @@ class TransactionController extends Controller
 
             return response()->json(['message' => 'Saque realizado com sucesso'], 201);
         } else {
-            // Necessita converter saldo de outras moedas
             $requiredAmount = $amount - $totalBalanceInRequestedCurrency;
-            $remainingRequiredAmountInBRL = 0;
-
-            // Calcula o total em BRL que falta
-            try {
-                $requestedExchangeRate = $exchangeRateService->getExchangeRate($currency);
-                $remainingRequiredAmountInBRL = $requiredAmount * $requestedExchangeRate['sell'];
-            } catch (\Exception $e) {
-                return response()->json(['message' => $e->getMessage()], 500);
-            }
-
-            $accountBalances = AccountBalance::where('account_id', $account->id)->get();
-            $totalBalanceInBRL = 0;
+            $remainingRequiredAmountInBRL = $requiredAmount * $requestedExchangeRate['sell'];
 
             foreach ($accountBalances as $balance) {
+                if ($remainingRequiredAmountInBRL <= 0) {
+                    break;
+                }
+
                 if ($balance->currency == 'BRL') {
-                    $totalBalanceInBRL += $balance->balance;
+                    $deductedAmount = min($remainingRequiredAmountInBRL, $balance->balance);
+                    $balance->balance -= $deductedAmount;
+                    $remainingRequiredAmountInBRL -= $deductedAmount;
                 } else {
                     try {
                         $exchangeRate = $exchangeRateService->getExchangeRate($balance->currency);
-                        $totalBalanceInBRL += $balance->balance * $exchangeRate['buy'];
+                        $amountToDeductInCurrency = min($remainingRequiredAmountInBRL / $exchangeRate['buy'], $balance->balance);
+                        $balance->balance -= $amountToDeductInCurrency;
+                        $remainingRequiredAmountInBRL -= $amountToDeductInCurrency * $exchangeRate['buy'];
                     } catch (\Exception $e) {
                         return response()->json(['message' => $e->getMessage()], 500);
                     }
                 }
+
+                $balance->save();
             }
 
-            if ($totalBalanceInBRL >= $remainingRequiredAmountInBRL) {
-                // Realiza a conversão e deduz dos saldos em outras moedas
-                foreach ($accountBalances as $balance) {
-                    if ($remainingRequiredAmountInBRL <= 0) {
-                        break;
-                    }
-
-                    if ($balance->currency == 'BRL') {
-                        $deductedAmount = min($remainingRequiredAmountInBRL, $balance->balance);
-                        $balance->balance -= $deductedAmount;
-                        $remainingRequiredAmountInBRL -= $deductedAmount;
-                    } else {
-                        try {
-                            $exchangeRate = $exchangeRateService->getExchangeRate($balance->currency);
-                            $amountToDeductInCurrency = min($remainingRequiredAmountInBRL / $exchangeRate['buy'], $balance->balance);
-                            $balance->balance -= $amountToDeductInCurrency;
-                            $remainingRequiredAmountInBRL -= $amountToDeductInCurrency * $exchangeRate['buy'];
-                        } catch (\Exception $e) {
-                            return response()->json(['message' => $e->getMessage()], 500);
-                        }
-                    }
-
-                    $balance->save();
-                }
-
-                // Deduz a parte restante da moeda original
-                if ($accountBalance) {
-                    $accountBalance->balance = 0;
-                } else {
-                    $accountBalance = new AccountBalance([
-                        'account_id' => $account->id,
-                        'currency' => $currency,
-                        'balance' => 0
-                    ]);
-                }
-                $accountBalance->save();
-
-                Transaction::create([
-                    'account_id' => $account->id,
-                    'amount' => -$amount,
-                    'original_amount' => $amount,
-                    'currency' => $currency,
-                    'type' => 'withdrawal'
-                ]);
-
-                return response()->json(['message' => 'Saque realizado com sucesso'], 201);
+            if ($accountBalance) {
+                $accountBalance->balance = 0;
             } else {
-                return response()->json(['message' => 'Saldo insuficiente em todas as moedas'], 400);
+                $accountBalance = new AccountBalance([
+                    'account_id' => $account->id,
+                    'currency' => $currency,
+                    'balance' => 0
+                ]);
             }
+            $accountBalance->save();
+
+            Transaction::create([
+                'account_id' => $account->id,
+                'amount' => -$amount,
+                'original_amount' => $amount,
+                'currency' => $currency,
+                'type' => 'withdrawal'
+            ]);
+
+            return response()->json(['message' => 'Saque realizado com sucesso'], 201);
         }
     }
+
 
     public function balance(Request $request, $accountNumber)
     {
@@ -187,7 +182,7 @@ class TransactionController extends Controller
             ], 200);
         } else {
             $balances = AccountBalance::where('account_id', $account->id)->get();
-            $sortedBalances = $balances->sortBy('currency')->values(); // Ordena os saldos por moeda
+            $sortedBalances = $balances->sortBy('currency')->values();
             $balancesArray = $sortedBalances->map(function ($balance) {
                 return [
                     'currency' => $balance->currency,

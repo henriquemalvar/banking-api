@@ -36,7 +36,7 @@ class ExchangeRateServiceTest extends TestCase
     {
         Http::fake([
             'https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/*' => Http::sequence()
-                ->push(['value' => []], 200) // No data for the first date
+                ->push(['value' => []], 200)
                 ->push([
                     'value' => [
                         [
@@ -46,7 +46,7 @@ class ExchangeRateServiceTest extends TestCase
                             'tipoBoletim' => 'Fechamento'
                         ]
                     ]
-                ], 200) // Data for the fallback date
+                ], 200)
         ]);
 
         $service = new ExchangeRateService();

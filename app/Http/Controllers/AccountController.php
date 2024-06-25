@@ -9,18 +9,11 @@ class AccountController extends Controller
 {
     public function create(Request $request)
     {
-        $request->validate([
-            'currency' => 'sometimes|string|size:3',
-        ]);
-
+        // Exemplo de geração de número de conta. Adapte conforme necessário.
         $accountNumber = $this->generateAccountNumber();
-
-        $currency = $request->input('currency', 'BRL');
 
         $account = Account::create([
             'account_number' => $accountNumber,
-            'balance' => 0,
-            'currency' => $currency,
         ]);
 
         return response()->json([
@@ -29,12 +22,12 @@ class AccountController extends Controller
         ], 201);
     }
 
-    private function generateAccountNumber()
+    // Exemplo de método para gerar um número de conta. Implemente sua lógica aqui.
+    protected function generateAccountNumber()
     {
-        do {
-            $accountNumber = random_int(1000000000, 9999999999);
-        } while (Account::where('account_number', $accountNumber)->exists());
-
-        return $accountNumber;
+        // Supondo que você queira um número sequencial, você pode buscar o último número e incrementá-lo.
+        // Isso é apenas um exemplo. Ajuste conforme a lógica necessária para seu caso.
+        $lastAccount = Account::orderBy('account_number', 'desc')->first();
+        return $lastAccount ? $lastAccount->account_number + 1 : 1;
     }
 }

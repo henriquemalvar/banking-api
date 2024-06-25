@@ -2,14 +2,18 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Account extends Model
 {
-    use HasFactory;
+    protected $fillable = [
+        'account_number',
+    ];
 
-    protected $fillable = ['account_number'];
+    public function balances()
+    {
+        return $this->hasMany(AccountBalance::class);
+    }
 
     public function transactions()
     {
